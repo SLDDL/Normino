@@ -5,7 +5,7 @@ with open('README.md', 'r', encoding='utf-8') as f:
 
 setup(
     name='normino',
-    version='0.1',
+    version='0.2',
     py_modules=['normino'],
     install_requires=[
         'colorama',
