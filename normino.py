@@ -1,6 +1,7 @@
 import subprocess
+import textwrap
 import argparse
-from pathlib import Path
+import shutil
 from colorama import init, Fore, Style
 init(autoreset=True)
 
@@ -23,7 +24,7 @@ def parse_output_line(line, detailed=False):
         error_info = f"\t{colorize_text(line_number, Fore.YELLOW)}\t{colorize_text(col_number, Fore.YELLOW)}     {colorize_text(error_name, Fore.RED)}"
         return error_info + f" {detail_text}" if detailed else error_info
     if ": Error!" in line:
-        return f"{colorize_text(file_path, Fore.CYAN)}\t---\t---    {colorize_text('---', Fore.CYAN)}"
+        return f"{colorize_text(file_path, Fore.CYAN)}"
     return None
 
 
@@ -56,7 +57,9 @@ def run_norminette(cmd, error_only, summary_only, detailed):
         if files_ok and not error_only:
             print(colorize_text(
                 "══════════════[ PASS ]══════════════════", Fore.GREEN))
-            print(colorize_text(", ".join(files_ok), Fore.GREEN))
+            wrapped_files_ok = textwrap.fill(colorize_text(
+                ", ".join(files_ok), Fore.GREEN), width=shutil.get_terminal_size().columns, break_on_hyphens=False)
+            print(wrapped_files_ok)
             if errors:
                 print()
         if errors:
