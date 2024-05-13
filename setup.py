@@ -5,7 +5,8 @@ with open('README.md', 'r', encoding='utf-8') as f:
 
 setup(
     name='normino',
-    version='0.2',
+    version='0.0',
+    url='https://github.com/SLDDL/Normino',
     py_modules=['normino'],
     install_requires=[
         'colorama',
@@ -16,5 +17,11 @@ setup(
         'console_scripts': [
             'normino=normino:main',
         ],
+    },
+    project_urls={
+        'Documentation': 'https://github.com/SLDDL/Normino/blob/main/README.md',
+        'Source': 'https://github.com/SLDDL/Normino',
+        'Tracker': 'https://github.com/SLDDL/Normino/issues',
+        'Icon': 'https://raw.githubusercontent.com/SLDDL/Normino/main/icon.png',
     },
 )
