@@ -14,20 +14,46 @@ def colorize_text(text, color):
     return f"{color}{text}{Style.RESET_ALL}"
 
 
-def display_errors(errors):
-    for error in errors:
-        print(error)
+def display_errors(errors, detailed):
+    column_width = shutil.get_terminal_size().columns
+    if column_width > 137 and not detailed:
+        column_width //= 2
+        print(errors[0])
+        for i in range(1, len(errors), 2):
+            left = textwrap.fill(
+                errors[i], width=column_width, subsequent_indent='    ')
+            right = textwrap.fill(errors[i + 1] if i + 1 < len(errors)
+                                  else '', width=column_width, subsequent_indent='    ')
+            print(f"{left:<{column_width}}{right}")
+    else:
+        for error in errors:
+            print(error)
 
 
-def find_c_and_h_files(path):
-    if not path:
-        path = "."
-    command = ["find", path, "-type", "f",
-               "(", "-name", "*.c", "-o", "-name", "*.h", ")"]
-    result = subprocess.run(
-        command, text=True, capture_output=True, check=True)
-    files = result.stdout.strip().split('\n')
-    return [file for file in files if file]
+def find_c_and_h_files(path, excludes):
+    find_all_command = ["find", path, "-type", "f","(", "-name", "*.c", "-o", "-name", "*.h", ")"]
+    try:
+        result_all = subprocess.run(
+            find_all_command, text=True, capture_output=True, check=True)
+        all_files = result_all.stdout.strip().split('\n')
+    except subprocess.CalledProcessError as e:
+        print(colorize_text(
+            f"Error during file search: {e.stderr.strip()}", Fore.RED))
+        exit(1)
+    excluded_files = set()
+    for pattern in excludes:
+        find_exclude_command = ["find", pattern, "-type",
+                                "f", "(", "-name", "*.c", "-o", "-name", "*.h", ")"]
+        try:
+            result_exclude = subprocess.run(
+                find_exclude_command, text=True, capture_output=True, check=True)
+            excluded_files.update(result_exclude.stdout.strip().split('\n'))
+        except subprocess.CalledProcessError as e:
+            print(colorize_text(
+                f"Error during exclusion search: {e.stderr.strip()}", Fore.RED))
+    included_files = [
+        file for file in all_files if file and file not in excluded_files]
+    return included_files
 
 
 def check_file(file, detailed):
@@ -102,7 +128,7 @@ def run_norminette(files, error_only, summary_only, detailed):
                 "File    Line    Col    Error Description", Fore.YELLOW))
             errors_by_file.sort
             for file, errors in errors_by_file:
-                display_errors(errors)
+                display_errors(errors, detailed)
         if files_failed:
             print("══════════════[ FAILED ]════════════════")
             files_failed.sort(key=lambda x: x[0])
@@ -131,6 +157,8 @@ def main():
     parser = argparse.ArgumentParser(description="Run norminette but better!")
     parser.add_argument("paths", nargs="*", default=["."],
                         help="Space-separated directory paths or shell patterns like '*.c'. Default is current directory.")
+    parser.add_argument("-x", "--exclude", nargs="*", default=[],
+                    help="Space-separated list of file patterns to exclude. Example usage: --exclude '*.tmp' 'test/*'")
     parser.add_argument("-e", "--error_only", action="store_true",
                         help="Display only errors.")
     parser.add_argument("-s", "--summary_only", action="store_true",
@@ -142,7 +170,7 @@ def main():
     args = parser.parse_args()
     all_files = []
     for path in args.paths:
-        all_files.extend(find_c_and_h_files(path))
+        all_files.extend(find_c_and_h_files(path, args.exclude))
     if args.list_files:
         for file in all_files:
             print(file)

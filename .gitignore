@@ -2,3 +2,5 @@ dist/
 normino.egg-info/
 build/
 ee.c
+tester/
+printtermsize.py
