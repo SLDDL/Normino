@@ -4,3 +4,4 @@ build/
 ee.c
 tester/
 printtermsize.py
+shell/
