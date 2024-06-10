@@ -1,78 +1,74 @@
 # Normino
 
-Normino is a command-line tool that enhances the functionality of the `norminette` command, providing a more user-friendly and informative output for checking the coding style of your C files.
+Normino is a command-line tool designed to enhance the `norminette` command, offering a more user-friendly and informative output for checking the coding style of your C files.
 
 ## Features
 
-- Colorized output for better readability
-- Detailed error messages with line and column numbers
-- Summary of correct files and files with errors
-- Support for file patterns and additional `norminette` arguments
+- **Colorized Output**: Enhances readability with color-coded messages.
+- **Detailed Error Messages**: Displays errors with line and column numbers.
+- **Summary Reporting**: Summarizes files that are correct and those with errors.
+- **Flexible File Patterns**: Supports checking multiple files using patterns.
+- **Extended `norminette` Support**: Allows passing additional arguments to `norminette`.
+- **Project Testers**: Easily download and list available testers for projects.
 
 ## Installation
 
-You can install Normino using pip:
+You can install Normino via pip:
 
-``​
-pip install normino
-``​
+``pip install normino``
 
-Make sure you have `norminette` installed and accessible in your system's PATH.
+Ensure `norminette` is installed and accessible in your system's PATH.
 
 ## Usage
 
-To run Normino, simply use the `normino` command followed by the filenames or file patterns you want to check:
+To run Normino, use the `normino` command followed by the filenames or patterns to check:
 
-``​
-normino file1.c file2.c
-normino *.c
-normino src/*.c include/*.h
-``​
+``normino file1.c file2.c``
+``normino *.c``
+``normino src/*.c include/*.h``
 
-You can also provide additional arguments for `norminette` using the `-a` or `--args` option:
+Add additional arguments for `norminette` with the `-a` or `--args` option:
 
-``​
-normino -a -R CheckForbiddenSourceHeader file.c
-``​
+``normino -a -R CheckForbiddenSourceHeader file.c``
 
 ### Options
 
 - `-e`, `--error_only`: Display only errors
 - `-s`, `--summary_only`: Display only the summary
-- `-d`, `--detailed`: Display detailed error messages
-- `-a`, `--args`: Additional arguments for `norminette`
+- `-d`, `--detailed`: Show detailed error messages
+- `-a`, `--args`: Pass additional arguments to `norminette`
+- `-t`, `--test [project_name]`: Show available testers or download the tester for the specified project
 
 ## Examples
 
 Check all `.c` files in the current directory:
 
-``​
-normino *.c
-``​
+``normino *.c``
 
-Check specific files and display only errors:
+Check specific files and show only errors:
 
-``​
-normino file1.c file2.c -e
-``​
+``normino file1.c file2.c -e``
 
 Check files in the `src` directory and display a summary:
 
-``​
-normino src/*.c -s
-``​
+``normino src/*.c -s``
 
 Check files with detailed error messages:
 
-``​
-normino file.c -d
-``​
+``normino file.c -d``
+
+List available project testers:
+
+``normino -t``
+
+Download the tester for a specific project (e.g., `libft`):
+
+``normino -t libft``
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+Normino is licensed under the [MIT License](LICENSE).
 
 ## Contributing
 
-Contributions are welcome! If you find any issues or have suggestions for improvements, please open an issue or submit a pull request.
-https://github.com/SLDDL/Normino
+We welcome contributions! If you encounter any issues or have suggestions for improvements, please open an issue or submit a pull request on our [GitHub repository](https://github.com/SLDDL/Normino).
