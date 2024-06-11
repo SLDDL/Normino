@@ -40,6 +40,7 @@ def display_errors(errors, detailed):
 
 
 def find_c_and_h_files(path, excludes):
+    path = os.path.abspath(path)
     find_all_command = [
         "find",
         path,
@@ -59,13 +60,14 @@ def find_c_and_h_files(path, excludes):
         )
         all_files = result_all.stdout.strip().split("\n")
     except subprocess.CalledProcessError as e:
-        print(colorize_text(f"Error during file search: {e.stderr.strip()}", Fore.RED))
+        print(f"Error during file search: {e.stderr.strip()}")
         exit(1)
     excluded_files = set()
     for pattern in excludes:
+        exclude_path = os.path.abspath(pattern)
         find_exclude_command = [
             "find",
-            pattern,
+            exclude_path,
             "-type",
             "f",
             "(",
@@ -82,19 +84,23 @@ def find_c_and_h_files(path, excludes):
             )
             excluded_files.update(result_exclude.stdout.strip().split("\n"))
         except subprocess.CalledProcessError as e:
-            print(
-                colorize_text(
-                    f"Error during exclusion search: {e.stderr.strip()}", Fore.RED
-                )
-            )
+            print(f"Error during exclusion search: {e.stderr.strip()}")
+
     included_files = [file for file in all_files if file and file not in excluded_files]
     return included_files
+
+
+def parce_notice_line(line, detailed=False):
+    if "Notice:" in line:
+        return f"{colorize_text(line, Fore.YELLOW)}"
 
 
 def check_file(file, detailed):
     cmd = ["norminette", file]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        if "Notice:" in result.stdout and ": OK!" in result.stdout:
+            return (file, "warning", None)
         if ": OK!" in result.stdout:
             return (file, "ok", None)
         else:
@@ -144,6 +150,11 @@ def run_norminette(files, error_only, summary_only, detailed):
             file, status, error_lines = future.result()
             if status == "ok":
                 files_ok.append(file)
+            elif status == "warning":
+                files_ok.append(file)
+                errors_by_file.append(
+                    (file, [f"{file}: Make sure your global is const or static!"])
+                )
             elif status == "error" and error_lines:
                 errors_by_file.append((file, error_lines))
             elif status in ["fail", "timeout", "crash"]:
@@ -217,7 +228,6 @@ def download_directory(base_url, local_path="."):
     parent_path = os.path.abspath(os.path.join(local_path, os.pardir))
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        print(f"Using temporary directory: {temp_dir}")
         download_recursive(base_url, temp_dir)
 
         for item in os.listdir(temp_dir):
@@ -227,8 +237,6 @@ def download_directory(base_url, local_path="."):
                 shutil.move(s, d)
             else:
                 shutil.move(s, d)
-
-        print(f"Files have been moved to {parent_path}")
 
 
 def download_recursive(base_url, local_path):
@@ -269,6 +277,7 @@ def fetch_test(name):
     local_path = os.path.join(os.getcwd(), name)
     print(f"{Fore.GREEN}{Style.BRIGHT}Downloading test for: {name}")
     download_directory(base_url, local_path)
+    print(f"{Fore.GREEN}{Style.BRIGHT}Test downloaded for {name}!")
 
 
 def downloader(name):
@@ -278,9 +287,6 @@ def downloader(name):
     normalized_available = {normalize_name(name): name for name in available_names}
     normalized_name = normalize_name(name)
     if normalized_name in normalized_available:
-        print(
-            f"{Fore.GREEN}{Style.BRIGHT}Downloading: {normalized_available[normalized_name]}"
-        )
         fetch_test(normalized_available[normalized_name])
 
     else:
