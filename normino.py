@@ -40,55 +40,29 @@ def display_errors(errors, detailed):
 
 
 def find_c_and_h_files(path, excludes):
+    original_path = os.getcwd() 
     path = os.path.abspath(path)
-    find_all_command = [
-        "find",
-        path,
-        "-type",
-        "f",
-        "(",
-        "-name",
-        "*.c",
-        "-o",
-        "-name",
-        "*.h",
-        ")",
-    ]
+    find_all_command = ["find", path, "-type", "f", "(", "-name", "*.c", "-o", "-name", "*.h", ")"]
     try:
-        result_all = subprocess.run(
-            find_all_command, text=True, capture_output=True, check=True
-        )
-        all_files = result_all.stdout.strip().split("\n")
+        result_all = subprocess.run(find_all_command, text=True, capture_output=True, check=True)
+        all_files = result_all.stdout.strip().split('\n')
     except subprocess.CalledProcessError as e:
-        print(f"Error during file search: {e.stderr.strip()}")
+        print(colorize_text(f"Error during file search: {e.stderr.strip()}", Fore.RED))
         exit(1)
+    
     excluded_files = set()
     for pattern in excludes:
-        exclude_path = os.path.abspath(pattern)
-        find_exclude_command = [
-            "find",
-            exclude_path,
-            "-type",
-            "f",
-            "(",
-            "-name",
-            "*.c",
-            "-o",
-            "-name",
-            "*.h",
-            ")",
-        ]
+        pattern = os.path.abspath(pattern)
+        find_exclude_command = ["find", pattern, "-type", "f", "(", "-name", "*.c", "-o", "-name", "*.h", ")"]
         try:
-            result_exclude = subprocess.run(
-                find_exclude_command, text=True, capture_output=True, check=True
-            )
-            excluded_files.update(result_exclude.stdout.strip().split("\n"))
+            result_exclude = subprocess.run(find_exclude_command, text=True, capture_output=True, check=True)
+            excluded_files.update(result_exclude.stdout.strip().split('\n'))
         except subprocess.CalledProcessError as e:
-            print(f"Error during exclusion search: {e.stderr.strip()}")
+            print(colorize_text(f"Error during exclusion search: {e.stderr.strip()}", Fore.RED))
 
-    included_files = [file for file in all_files if file and file not in excluded_files]
+    included_files = [os.path.relpath(file, original_path) for file in all_files if file and file not in excluded_files]
+
     return included_files
-
 
 def parce_notice_line(line, detailed=False):
     if "Notice:" in line:
@@ -226,17 +200,20 @@ def fetch_available_names():
 def download_directory(base_url, local_path="."):
     local_path = os.path.abspath(local_path)
     parent_path = os.path.abspath(os.path.join(local_path, os.pardir))
-
     with tempfile.TemporaryDirectory() as temp_dir:
         download_recursive(base_url, temp_dir)
-
+        with open(os.path.join(temp_dir, 'downloaded.tests'), 'w') as f:
+            for item in os.listdir(temp_dir):
+                f.write(item + '\n')
         for item in os.listdir(temp_dir):
-            s = os.path.join(temp_dir, item)
-            d = os.path.join(parent_path, item)
-            if os.path.isdir(s):
-                shutil.move(s, d)
+            source_path = os.path.join(temp_dir, item)
+            dest_path = os.path.join(parent_path, item)
+            if os.path.isdir(source_path):
+                shutil.move(source_path, dest_path)
             else:
-                shutil.move(s, d)
+                shutil.move(source_path, dest_path)
+            os.chmod(dest_path, 0o777)
+
 
 
 def download_recursive(base_url, local_path):
@@ -271,7 +248,6 @@ def download_recursive(base_url, local_path):
                 except requests.exceptions.RequestException as e:
                     print(f"Failed to download file {full_url}: {e}")
 
-
 def fetch_test(name):
     base_url = f"http://smasse.xyz/{name}/"
     local_path = os.path.join(os.getcwd(), name)
@@ -279,6 +255,21 @@ def fetch_test(name):
     download_directory(base_url, local_path)
     print(f"{Fore.GREEN}{Style.BRIGHT}Test downloaded for {name}!")
 
+def delete_downloaded_files(record_file="downloaded.tests"):
+    local_base_path = os.getcwd()  # assuming this is /home/slddl/norminop
+    with open(record_file, "r") as file:
+        paths = file.readlines()
+    for path in sorted(paths, reverse=True):  # Delete files before directories
+        path = path.strip()
+        full_path = os.path.join(local_base_path, path)
+        if os.path.exists(full_path):
+            if os.path.isdir(full_path):
+                shutil.rmtree(full_path)
+            else:
+                os.remove(full_path)
+            print(f"{Fore.GREEN}Deleted: {full_path}")
+        else:
+            print(f"{Fore.YELLOW}Path not found, skipping: {full_path}")
 
 def downloader(name):
     available_names = fetch_available_names()
@@ -354,6 +345,9 @@ def main():
         nargs=argparse.REMAINDER,
         help="Download tests with the given name (which might contain spaces).",
     )
+    parser.add_argument(
+        "-c", "--clean", action="store_true", help="Clean all downloaded test directories and their record file."
+    )
     args = parser.parse_args()
     if args.test is not None:
         test_name = " ".join(args.test) if args.test else ""
@@ -362,7 +356,9 @@ def main():
         else:
             download_available()
         return
-
+    if args.clean:
+        delete_downloaded_files()
+        return
     all_files = []
     for path in args.paths:
         all_files.extend(find_c_and_h_files(path, args.exclude))

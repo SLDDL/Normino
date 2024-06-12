@@ -38,6 +38,7 @@ Add additional arguments for `norminette` with the `-a` or `--args` option:
 - `-d`, `--detailed`: Show detailed error messages
 - `-a`, `--args`: Pass additional arguments to `norminette`
 - `-t`, `--test [project_name]`: Show available testers or download the tester for the specified project
+- `-c`, `--clean`: Remove downloaded testers
 
 ## Examples
 
