@@ -64,11 +64,6 @@ def find_c_and_h_files(path, excludes):
 
     return included_files
 
-def parce_notice_line(line, detailed=False):
-    if "Notice:" in line:
-        return f"{colorize_text(line, Fore.YELLOW)}"
-
-
 def check_file(file, detailed):
     cmd = ["norminette", file]
     try:
@@ -186,15 +181,21 @@ def normalize_name(name):
 
 
 def fetch_available_names():
-    response = requests.get("https://smasse.xyz/available.txt")
-    if response.status_code == 200:
+    url = "https://smasse.xyz/available.txt"
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()  # Raises HTTPError for bad responses (4xx or 5xx)
         names = response.text.split("\n")
         return [name.strip() for name in names if name.strip()]
-    else:
-        print(
-            f"{Fore.RED}{Style.BRIGHT}Error: Unable to fetch the list of available test names."
-        )
-        return []
+    except requests.exceptions.HTTPError as http_err:
+        print(f"{Fore.RED}{Style.BRIGHT}HTTP error occurred while fetching available names: {http_err}")
+    except requests.exceptions.ConnectionError:
+        print(f"{Fore.RED}{Style.BRIGHT}Connection error occurred while trying to reach {url}.")
+    except requests.exceptions.Timeout:
+        print(f"{Fore.RED}{Style.BRIGHT}The request to {url} timed out.")
+    except requests.exceptions.RequestException as err:
+        print(f"{Fore.RED}{Style.BRIGHT}An unexpected error occurred: {err}")
+    return []
 
 
 def download_directory(base_url, local_path="."):
@@ -218,10 +219,19 @@ def download_directory(base_url, local_path="."):
 
 def download_recursive(base_url, local_path):
     try:
-        response = requests.get(base_url)
+        response = requests.get(base_url, timeout=10)
         response.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        print(f"Failed to connect to {base_url}: {e}")
+    except requests.exceptions.HTTPError as http_err:
+        print(f"{Fore.RED}{Style.BRIGHT}HTTP error occurred while accessing {base_url}: {http_err}")
+        return
+    except requests.exceptions.ConnectionError:
+        print(f"{Fore.RED}{Style.BRIGHT}Connection error occurred while trying to reach {base_url}.")
+        return
+    except requests.exceptions.Timeout:
+        print(f"{Fore.RED}{Style.BRIGHT}The request to {base_url} timed out.")
+        return
+    except requests.exceptions.RequestException as err:
+        print(f"{Fore.RED}{Style.BRIGHT}An unexpected error occurred while accessing {base_url}: {err}")
         return
 
     soup = BeautifulSoup(response.text, "html.parser")
@@ -252,8 +262,11 @@ def fetch_test(name):
     base_url = f"http://smasse.xyz/{name}/"
     local_path = os.path.join(os.getcwd(), name)
     print(f"{Fore.GREEN}{Style.BRIGHT}Downloading test for: {name}")
-    download_directory(base_url, local_path)
-    print(f"{Fore.GREEN}{Style.BRIGHT}Test downloaded for {name}!")
+    try:
+        download_directory(base_url, local_path)
+        print(f"{Fore.GREEN}{Style.BRIGHT}Test downloaded for {name}!")
+    except Exception as e:
+        print(f"{Fore.RED}{Style.BRIGHT}Failed to download test for {name}: {e}")
 
 def delete_downloaded_files(record_file="downloaded.tests"):
     local_base_path = os.getcwd()  # assuming this is /home/slddl/norminop
