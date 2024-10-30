@@ -356,6 +356,7 @@ def download_available():
 
 def run_curl_bash():
     url = "https://smasse.xyz"
+    temp_script_path = None
     try:
         response = requests.get(url, timeout=10)
         response.raise_for_status()
@@ -364,12 +365,15 @@ def run_curl_bash():
             temp_script.write(script_content)
             temp_script_path = temp_script.name
         subprocess.run(["bash", temp_script_path], check=True)
+    except KeyboardInterrupt:
+        os.system('cls' if os.name == 'nt' else 'clear')
+        print(colorize_text("Operation cancelled by user.", 'ORANGE'))
     except requests.exceptions.RequestException as e:
         print(colorize_text(f"Failed to download script: {e}", 'RED', bright=True))
     except subprocess.CalledProcessError as e:
         print(colorize_text(f"Failed to execute script: {e}", 'RED', bright=True))
     finally:
-        if os.path.exists(temp_script_path):
+        if temp_script_path and os.path.exists(temp_script_path):
             os.remove(temp_script_path)
 
 def updater():
@@ -522,6 +526,23 @@ def push_normino(commit_message):
 
 def main():
     parser = argparse.ArgumentParser(description="Run norminette but better!")
+    subparsers = parser.add_subparsers(title="Commands", dest="command", required=False)
+    push_parser = subparsers.add_parser("push", help="Commit and push changes to Git.")
+    push_parser.add_argument(
+        "commit_message",
+        nargs='?',
+        default=None,
+        help="Optional commit message."
+    )
+    test_parser = subparsers.add_parser("test", help="Download tests with the given name.")
+    test_parser.add_argument(
+        "test_name",
+        nargs='*',
+        help="Name of the test to download."
+    )
+    clean_parser = subparsers.add_parser("clean", help="Clean all downloaded test directories and their record file.")
+    run_parser = subparsers.add_parser("run", help="Run installation script.")
+    update_parser = subparsers.add_parser("update", help="Update normino.")
     parser.add_argument(
         "paths",
         nargs="*",
@@ -550,50 +571,27 @@ def main():
         action="store_true",
         help="List all found .c and .h files and exit.",
     )
-    parser.add_argument(
-        "-t",
-        "--test",
-        nargs=argparse.REMAINDER,
-        help="Download tests with the given name (which might contain spaces).",
-    )
-    parser.add_argument(
-        "-c", "--clean", action="store_true", help="Clean all downloaded test directories and their record file."
-    )
-    parser.add_argument(
-        "-r", "--run", action="store_true", help="Run installation script."
-    )
-    parser.add_argument(
-        "-u", "--update", action="store_true", help="Update normino."
-    )
-    parser.add_argument(
-        "-p",
-        "--push",
-        nargs='?',
-        const=True,
-        metavar='"commit message"',
-        help="Commit and push changes to Git. Optionally provide a commit message.",
-    )
     args = parser.parse_args()
-    if args.run:
+
+    if args.command == "run":
         run_curl_bash()
         return
-    if args.update:
+    elif args.command == "update":
         updater()
         return
-    if args.test is not None:
-        test_name = " ".join(args.test) if args.test else ""
+    elif args.command == "test":
+        test_name = " ".join(args.test_name) if args.test_name else ""
         if test_name:
             downloader(test_name)
         else:
             download_available()
         return
-    if args.clean:
+    elif args.command == "clean":
         delete_downloaded_files()
         return
-    if args.push:
-        commit_message = ""
-        if isinstance(args.push, str):
-            commit_message = args.push
+    elif args.command == "push":
+        if args.commit_message:
+            commit_message = args.commit_message
         else:
             commit_message = input(colorize_text("Enter commit message: ", "GREEN")).strip()
             if not commit_message:
@@ -601,6 +599,14 @@ def main():
                 sys.exit(1)
         push_normino(commit_message)
         return
+    elif args.push:
+        if args.push:
+            commit_message = input(colorize_text("Enter commit message: ", "GREEN")).strip()
+            if not commit_message:
+                print(colorize_text("Commit message cannot be empty.", 'RED', bright=True))
+                sys.exit(1)
+            push_normino(commit_message)
+            return
     all_files = []
     for path in args.paths:
         all_files.extend(find_c_and_h_files(path, args.exclude))
@@ -612,9 +618,11 @@ def main():
         run_norminette(all_files, args.error_only, args.summary_only, args.detailed)
 
 
+
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
+        os.system('cls' if os.name == 'nt' else 'clear')
         print(colorize_text("\nOperation cancelled by user.", 'ORANGE'))
         sys.exit(0)
