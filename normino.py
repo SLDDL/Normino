@@ -514,7 +514,7 @@ def main():
     if args.clean:
         delete_downloaded_files()
         return
-    if args.push is not False:
+    if args.push:
         commit_message = ""
         if isinstance(args.push, str):
             commit_message = args.push
