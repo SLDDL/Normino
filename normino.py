@@ -1,8 +1,9 @@
 import subprocess
+import sys
 import textwrap
 import argparse
 import shutil
-from colorama import init, Fore, Style
+from colorama import init, Style
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import time
 import requests
@@ -11,57 +12,71 @@ import os
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 import tempfile
+import itertools
 
 init(autoreset=True)
 
 
-def colorize_text(text, color):
-    return f"{color}{text}{Style.RESET_ALL}"
+def colorize_text(text, color_name, bright=False):
+    COLOR_RGB = {
+        'RED':  	(255,76,76),
+        'GREEN':  	(158,214,115),
+        'BLUE':  	(25,72,133),
+        'YELLOW': (240,226,111),
+        'CYAN': (6, 146, 213),
+        'MAGENTA': (255, 182, 193),
+        'ORANGE':  	(241,143,51),
+        'WHITE': (245, 245, 245),
+    }
+    r, g, b = COLOR_RGB.get(color_name.upper(), (255, 255, 255))
+    style_code = ''
+    if bright:
+        style_code = Style.BRIGHT
+    return f"{style_code}\033[38;2;{r};{g};{b}m{text}{Style.RESET_ALL}"
 
+import re
 
-def display_errors(errors, detailed):
-    column_width = shutil.get_terminal_size().columns
-    if column_width > 137 and not detailed:
-        column_width //= 2
-        print(errors[0])
-        for i in range(1, len(errors), 2):
-            left = textwrap.fill(
-                errors[i], width=column_width, subsequent_indent="    "
-            )
-            right = textwrap.fill(
-                errors[i + 1] if i + 1 < len(errors) else "",
-                width=column_width,
-                subsequent_indent="    ",
-            )
-            print(f"{left:<{column_width}}{right}")
+def remove_extra_spaces_in_between(s):
+    return re.sub(r'(?<=\S) {2,}(?=\S)', ' ', s)
+
+def display_errors(file, errors, detailed):
+    if not errors:
+        return
     else:
-        for error in errors:
-            print(error)
+        print(colorize_text(f"{file}", 'CYAN'))
+        if detailed:
+            for error in errors:
+                print(error)
+        else:
+            terminal_width = shutil.get_terminal_size().columns
+            max_error_length = max(len(error) for error in errors)
+            padding = 2
+            column_width = max_error_length + padding
+            num_cols = max(1, terminal_width // column_width)
+            if num_cols == 1:
+                for error in errors:
+                    print(error)
+            else:
+                num_errors = len(errors)
+                num_rows = (num_errors + num_cols - 1) // num_cols
+                columns = [errors[i*num_rows : (i+1)*num_rows] for i in range(num_cols)]
+                for row in itertools.zip_longest(*columns, fillvalue=''):
+                    row_items = [item.ljust(column_width) for item in row]
+                    print(''.join(row_items))
 
 
-def find_c_and_h_files(path, excludes):
-    original_path = os.getcwd() 
-    path = os.path.abspath(path)
-    find_all_command = ["find", path, "-type", "f", "(", "-name", "*.c", "-o", "-name", "*.h", ")"]
-    try:
-        result_all = subprocess.run(find_all_command, text=True, capture_output=True, check=True)
-        all_files = result_all.stdout.strip().split('\n')
-    except subprocess.CalledProcessError as e:
-        print(colorize_text(f"Error during file search: {e.stderr.strip()}", Fore.RED))
-        exit(1)
-    
-    excluded_files = set()
-    for pattern in excludes:
-        pattern = os.path.abspath(pattern)
-        find_exclude_command = ["find", pattern, "-type", "f", "(", "-name", "*.c", "-o", "-name", "*.h", ")"]
-        try:
-            result_exclude = subprocess.run(find_exclude_command, text=True, capture_output=True, check=True)
-            excluded_files.update(result_exclude.stdout.strip().split('\n'))
-        except subprocess.CalledProcessError as e:
-            print(colorize_text(f"Error during exclusion search: {e.stderr.strip()}", Fore.RED))
-
-    included_files = [os.path.relpath(file, original_path) for file in all_files if file and file not in excluded_files]
-
+def find_c_and_h_files(paths, excludes):
+    included_files = []
+    exclude_set = set(os.path.abspath(exclude) for exclude in excludes)
+    for path in paths:
+        for root, dirs, files in os.walk(path):
+            dirs[:] = [d for d in dirs if os.path.abspath(os.path.join(root, d)) not in exclude_set]
+            for file in files:
+                file_path = os.path.join(root, file)
+                if os.path.abspath(file_path) in exclude_set:
+                    continue
+                if file.endswith(('.c', '.h')):
+                    included_files.append(file_path)
     return included_files
 
 def check_file(file, detailed):
@@ -89,7 +104,6 @@ def check_file(file, detailed):
 
 def parse_output_line(line, detailed=False):
     parts = line.split()
-    file_path = parts[0].split(":")[0]
     if "Unexpected EOF" in line:
         return line
     elif "Error:" in line:
@@ -100,17 +114,25 @@ def parse_output_line(line, detailed=False):
         )
         error_name = error_description.split("(")[0].strip()
         detail_text = error_description.split(")")[1].strip() if detailed else ""
-        error_info = f"\t{colorize_text(line_number, Fore.YELLOW)}\t{colorize_text(col_number, Fore.YELLOW)}     {colorize_text(error_name, Fore.RED)}"
+        line_num_width = 4
+        col_num_width = 4
+        error_info = f"{colorize_text(f'{line_number:>{line_num_width}}', 'YELLOW')} {colorize_text(f'{col_number:>{col_num_width}}', 'YELLOW')} {colorize_text(error_name, 'RED')}"
         return error_info + f" {detail_text}" if detailed else error_info
     elif ": Error!" in line:
-        return f"{colorize_text(file_path, Fore.CYAN)}"
+        return None
     return None
 
+def print_warnings(warning_files):
+    print(colorize_text("══════════════[ WARN ]══════════════════", 'YELLOW'))
+    for file, warnings in warning_files:
+        print(colorize_text(f"{file}:", 'CYAN'))
+        for warning in warnings:
+            print(f"   {colorize_text(warning, 'YELLOW')}")
 
 def run_norminette(files, error_only, summary_only, detailed):
     start_time = time.time()
-    print(colorize_text("Processing...", Fore.CYAN))
-    files_ok, files_failed, errors_by_file = [], [], []
+    print(colorize_text("Processing...", 'CYAN'))
+    files_ok, files_failed, errors_by_file, warning_files = [], [], [], []
     with ProcessPoolExecutor(max_workers=7) as executor:
         future_to_file = {
             executor.submit(check_file, file, detailed): file for file in files
@@ -120,9 +142,8 @@ def run_norminette(files, error_only, summary_only, detailed):
             if status == "ok":
                 files_ok.append(file)
             elif status == "warning":
-                files_ok.append(file)
-                errors_by_file.append(
-                    (file, [f"{file}: Make sure your global is const or static!"])
+                warning_files.append(
+                    (file, ["Make sure your global is const or static!"])
                 )
             elif status == "error" and error_lines:
                 errors_by_file.append((file, error_lines))
@@ -131,30 +152,30 @@ def run_norminette(files, error_only, summary_only, detailed):
     print("\033[A                             \033[A")
     if not summary_only:
         if files_ok and not error_only:
-            print(colorize_text("══════════════[ PASS ]══════════════════", Fore.GREEN))
+            print(colorize_text("══════════════[ PASS ]══════════════════", 'GREEN'))
             files_ok.sort()
             wrapped_files_ok = textwrap.fill(
-                colorize_text(", ".join(files_ok), Fore.GREEN),
+                colorize_text(", ".join(files_ok), 'GREEN'),
                 width=shutil.get_terminal_size().columns,
                 break_on_hyphens=False,
             )
             print(wrapped_files_ok)
             if errors_by_file:
                 print()
+        if warning_files:
+            print_warnings(warning_files)
         if errors_by_file:
-            print(colorize_text("══════════════[ FAIL ]══════════════════", Fore.RED))
-            print(
-                colorize_text("File    Line    Col    Error Description", Fore.YELLOW)
-            )
-            errors_by_file.sort
+            print(colorize_text("══════════════[ FAIL ]══════════════════", 'RED'))
+            print(colorize_text(f"{'Line':>4} {'Col':>4} Error Description", 'YELLOW'))
+            errors_by_file.sort()
             for file, errors in errors_by_file:
-                display_errors(errors, detailed)
+                display_errors(file, errors, detailed)
         if files_failed:
             print("══════════════[ FAILED ]════════════════")
             files_failed.sort(key=lambda x: x[0])
             for file, msg in files_failed:
                 wrapped_failed_msg = textwrap.fill(
-                    colorize_text(f"{file}: {msg}", Fore.YELLOW),
+                    colorize_text(f"{file}: {msg}", 'YELLOW'),
                     width=shutil.get_terminal_size().columns,
                     break_on_hyphens=False,
                 )
@@ -162,18 +183,18 @@ def run_norminette(files, error_only, summary_only, detailed):
     if summary_only or errors_by_file or files_failed:
         print("════════════════════════════════════════")
         unique_files_with_errors = set(file for file, _ in errors_by_file)
-        print(colorize_text(f"Correct files: {len(files_ok)}", Fore.GREEN))
+        print(colorize_text(f"Correct files: {len(files_ok)}", 'GREEN'))
         print(
             colorize_text(
-                f"Files with errors: {len(unique_files_with_errors)}", Fore.RED
+                f"Files with errors: {len(unique_files_with_errors)}", 'RED'
             )
         )
         crashnum = len(files_failed)
         if crashnum != 0:
-            print(colorize_text(f"Files that crashed norminette: {crashnum}", Fore.RED))
+            print(colorize_text(f"Files that crashed norminette: {crashnum}", 'RED'))
     end_time = time.time()
     execution_time = end_time - start_time
-    print(colorize_text(f"Execution time: {execution_time:.2f} seconds", Fore.BLUE))
+    print(colorize_text(f"Execution time: {execution_time:.2f} seconds", 'BLUE'))
 
 
 def normalize_name(name):
@@ -184,17 +205,17 @@ def fetch_available_names():
     url = "https://smasse.xyz/available.txt"
     try:
         response = requests.get(url, timeout=10)
-        response.raise_for_status()  # Raises HTTPError for bad responses (4xx or 5xx)
+        response.raise_for_status()
         names = response.text.split("\n")
         return [name.strip() for name in names if name.strip()]
     except requests.exceptions.HTTPError as http_err:
-        print(f"{Fore.RED}{Style.BRIGHT}HTTP error occurred while fetching available names: {http_err}")
+        print(colorize_text(f"HTTP error occurred while fetching available names: {http_err}", 'RED', bright=True))
     except requests.exceptions.ConnectionError:
-        print(f"{Fore.RED}{Style.BRIGHT}Connection error occurred while trying to reach {url}.")
+        print(colorize_text(f"Connection error occurred while trying to reach {url}.", 'RED', bright=True))
     except requests.exceptions.Timeout:
-        print(f"{Fore.RED}{Style.BRIGHT}The request to {url} timed out.")
+        print(colorize_text(f"The request to {url} timed out.", 'RED', bright=True))
     except requests.exceptions.RequestException as err:
-        print(f"{Fore.RED}{Style.BRIGHT}An unexpected error occurred: {err}")
+        print(colorize_text(f"An unexpected error occurred: {err}", 'RED', bright=True))
     return []
 
 
@@ -216,22 +237,21 @@ def download_directory(base_url, local_path="."):
             os.chmod(dest_path, 0o777)
 
 
-
 def download_recursive(base_url, local_path):
     try:
         response = requests.get(base_url, timeout=10)
         response.raise_for_status()
     except requests.exceptions.HTTPError as http_err:
-        print(f"{Fore.RED}{Style.BRIGHT}HTTP error occurred while accessing {base_url}: {http_err}")
+        print(colorize_text(f"HTTP error occurred while accessing {base_url}: {http_err}", 'RED', bright=True))
         return
     except requests.exceptions.ConnectionError:
-        print(f"{Fore.RED}{Style.BRIGHT}Connection error occurred while trying to reach {base_url}.")
+        print(colorize_text(f"Connection error occurred while trying to reach {base_url}.", 'RED', bright=True))
         return
     except requests.exceptions.Timeout:
-        print(f"{Fore.RED}{Style.BRIGHT}The request to {base_url} timed out.")
+        print(colorize_text(f"The request to {base_url} timed out.", 'RED', bright=True))
         return
     except requests.exceptions.RequestException as err:
-        print(f"{Fore.RED}{Style.BRIGHT}An unexpected error occurred while accessing {base_url}: {err}")
+        print(colorize_text(f"An unexpected error occurred while accessing {base_url}: {err}", 'RED', bright=True))
         return
 
     soup = BeautifulSoup(response.text, "html.parser")
@@ -261,18 +281,18 @@ def download_recursive(base_url, local_path):
 def fetch_test(name):
     base_url = f"http://smasse.xyz/{name}/"
     local_path = os.path.join(os.getcwd(), name)
-    print(f"{Fore.GREEN}{Style.BRIGHT}Downloading test for: {name}")
+    print(colorize_text(f"Downloading test for: {name}", 'GREEN', bright=True))
     try:
         download_directory(base_url, local_path)
-        print(f"{Fore.GREEN}{Style.BRIGHT}Test downloaded for {name}!")
+        print(colorize_text(f"Test downloaded for {name}!", 'GREEN', bright=True))
     except Exception as e:
-        print(f"{Fore.RED}{Style.BRIGHT}Failed to download test for {name}: {e}")
+        print(colorize_text(f"Failed to download test for {name}: {e}", 'RED', bright=True))
 
 def delete_downloaded_files(record_file="downloaded.tests"):
-    local_base_path = os.getcwd()  # assuming this is /home/slddl/norminop
+    local_base_path = os.getcwd()
     with open(record_file, "r") as file:
         paths = file.readlines()
-    for path in sorted(paths, reverse=True):  # Delete files before directories
+    for path in sorted(paths, reverse=True):
         path = path.strip()
         full_path = os.path.join(local_base_path, path)
         if os.path.exists(full_path):
@@ -280,9 +300,9 @@ def delete_downloaded_files(record_file="downloaded.tests"):
                 shutil.rmtree(full_path)
             else:
                 os.remove(full_path)
-            print(f"{Fore.GREEN}Deleted: {full_path}")
+            print(colorize_text(f"Deleted: {full_path}", 'GREEN'))
         else:
-            print(f"{Fore.YELLOW}Path not found, skipping: {full_path}")
+            print(colorize_text(f"Path not found, skipping: {full_path}", 'YELLOW'))
 
 def downloader(name):
     available_names = fetch_available_names()
@@ -299,11 +319,11 @@ def downloader(name):
         )
         if close_matches:
             print(
-                f"{Fore.YELLOW}{Style.BRIGHT}Did you mean: {normalized_available[close_matches[0]]}?"
+                colorize_text(f"Did you mean: {normalized_available[close_matches[0]]}?", 'YELLOW', bright=True)
             )
             exit(0)
         else:
-            print(f"{Fore.RED}{Style.BRIGHT}No match found for: {name}")
+            print(colorize_text(f"No match found for: {name}", 'RED', bright=True))
             exit(0)
 
 
@@ -311,16 +331,46 @@ def download_available():
     response = requests.get("https://smasse.xyz/available.txt")
     if response.status_code == 200:
         names = response.text.split("\n")
-        print(f"{Fore.GREEN}{Style.BRIGHT}Projects with Tests Available:\n")
+        print(colorize_text("Projects with Tests Available:\n", 'GREEN', bright=True))
         for name in names:
             if name.strip():
-                print(f"{Fore.CYAN} - {name.strip()}")
+                print(colorize_text(f" - {name.strip()}", 'CYAN'))
         print("\n")
     else:
         print(
-            f"{Fore.RED}{Style.BRIGHT}Error: Unable to fetch the list of available test names."
+            colorize_text("Error: Unable to fetch the list of available test names.", 'RED', bright=True)
         )
 
+def run_curl_bash():
+    url = "https://smasse.xyz"
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        script_content = response.text
+        with tempfile.NamedTemporaryFile(delete=False, mode='w', suffix='.sh') as temp_script:
+            temp_script.write(script_content)
+            temp_script_path = temp_script.name
+        subprocess.run(["bash", temp_script_path], check=True)
+    except requests.exceptions.RequestException as e:
+        print(colorize_text(f"Failed to download script: {e}", 'RED', bright=True))
+    except subprocess.CalledProcessError as e:
+        print(colorize_text(f"Failed to execute script: {e}", 'RED', bright=True))
+    finally:
+        if os.path.exists(temp_script_path):
+            os.remove(temp_script_path)
+
+def updater():
+    package_name = "normino"
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--upgrade", package_name],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        print(colorize_text(f"Update successful:\n{result.stdout}", 'GREEN'))
+    except subprocess.CalledProcessError as e:
+        print(colorize_text(f"Update failed:\n{e.stderr}", 'RED'))
 
 def main():
     parser = argparse.ArgumentParser(description="Run norminette but better!")
@@ -361,7 +411,19 @@ def main():
     parser.add_argument(
         "-c", "--clean", action="store_true", help="Clean all downloaded test directories and their record file."
     )
+    parser.add_argument(
+        "-r", "--run", action="store_true", help="Run installation script."
+    )
+    parser.add_argument(
+        "-u", "--update", action="store_true", help="Update normino."
+    )
     args = parser.parse_args()
+    if args.run:
+        run_curl_bash()
+        return
+    if args.update:
+        updater()
+        return
     if args.test is not None:
         test_name = " ".join(args.test) if args.test else ""
         if test_name:

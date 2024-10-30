@@ -39,6 +39,8 @@ Add additional arguments for `norminette` with the `-a` or `--args` option:
 - `-a`, `--args`: Pass additional arguments to `norminette`
 - `-t`, `--test [project_name]`: Show available testers or download the tester for the specified project
 - `-c`, `--clean`: Remove downloaded testers
+- `-u`, `--update`: Update Normino to the latest version
+- `-r`, `--run`: Run installation script.
 
 ## Examples
 
