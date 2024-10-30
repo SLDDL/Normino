@@ -1,3 +1,4 @@
+import glob
 import subprocess
 import sys
 import textwrap
@@ -195,7 +196,7 @@ def run_norminette(files, error_only, summary_only, detailed):
     end_time = time.time()
     execution_time = end_time - start_time
     print(colorize_text(f"Execution time: {execution_time:.2f} seconds", 'BLUE'))
-
+    return len(errors_by_file), len(files_failed)
 
 def normalize_name(name):
     return name.replace(" ", "").replace("_", "").replace("-", "").lower()
@@ -372,6 +373,77 @@ def updater():
     except subprocess.CalledProcessError as e:
         print(colorize_text(f"Update failed:\n{e.stderr}", 'RED'))
 
+def is_git_repository():
+    return os.path.isdir(".git")
+
+def get_git_root():
+    try:
+        result = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True)
+        return result.stdout.strip()
+    except subprocess.CalledProcessError:
+        return None
+
+def check_unwanted_files():
+    executables = []
+    for root, dirs, files in os.walk('.'):
+        dirs[:] = [d for d in dirs if d != '.git']
+        for file in files:
+            if file == '.gitignore' or file == '.git':
+                continue
+            if os.access(os.path.join(root, file), os.X_OK) and not file.endswith(('.c', '.h', '.sh')):
+                executables.append(os.path.join(root, file))
+    unwanted_files = executables
+    for pattern in ['.*', '*.o', '*.a', '*~', '*.swp', '*.swo', '*.swn', '*.swo']:
+        matches = [f for f in glob.glob(pattern, recursive=True) if not f.endswith('.git') and not f.endswith('.gitignore')]
+        unwanted_files.extend(matches)
+    unwanted_files = list(set(unwanted_files))
+    return unwanted_files
+
+def git_commit_push(commit_message):
+    try:
+        subprocess.run(["git", "add", "."], check=True)
+        subprocess.run(["git", "commit", "-m", commit_message], check=True)
+        try:
+            subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True, check=True)
+            current_branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"]).decode().strip()
+            subprocess.run(["git", "push", "-u", "origin", current_branch], check=True)
+        except subprocess.CalledProcessError:
+            print(colorize_text("No upstream branch set. Attempting to set upstream.", 'YELLOW'))
+            subprocess.run(["git", "push", "-u", "origin", "HEAD"], check=True)
+    except subprocess.CalledProcessError as e:
+        print(colorize_text(f"Git operation failed: {e}", 'RED'))
+        sys.exit(1)
+
+def reset_git():
+    try:
+        subprocess.run(["git", "reset", "--hard"], check=True)
+        print(colorize_text("Git repository has been reset.", 'GREEN'))
+    except subprocess.CalledProcessError as e:
+        print(colorize_text(f"Failed to reset Git repository: {e}", 'RED'))
+
+def push_normino(commit_message):
+    if not is_git_repository():
+        print(colorize_text("Current directory is not a Git repository.", 'RED', bright=True))
+        sys.exit(1)
+    git_root = get_git_root()
+    if not git_root:
+        print(colorize_text("Unable to determine Git root directory.", 'RED', bright=True))
+        sys.exit(1)
+    os.chdir(git_root)
+    errors, failures = run_norminette(find_c_and_h_files(["."], []), error_only=True, summary_only=False, detailed=False)
+    if errors > 0 or failures > 0:
+        print(colorize_text(f"Cannot push because there are {errors} Norminette errors.", 'RED', bright=True))
+        sys.exit(1)
+    unwanted_files = check_unwanted_files()
+    if unwanted_files:
+        print(colorize_text("Unwanted files detected:", 'RED', bright=True))
+        for file in unwanted_files:
+            print(colorize_text(f" - {file}", 'YELLOW'))
+        print(colorize_text("Please remove these files before committing.", 'RED', bright=True))
+        sys.exit(1)
+    git_commit_push(commit_message)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run norminette but better!")
     parser.add_argument(
@@ -417,6 +489,14 @@ def main():
     parser.add_argument(
         "-u", "--update", action="store_true", help="Update normino."
     )
+    parser.add_argument(
+        "-p",
+        "--push",
+        nargs='?',
+        const=True,
+        metavar='"commit message"',
+        help="Commit and push changes to Git. Optionally provide a commit message.",
+    )
     args = parser.parse_args()
     if args.run:
         run_curl_bash()
@@ -433,6 +513,17 @@ def main():
         return
     if args.clean:
         delete_downloaded_files()
+        return
+    if args.push is not False:
+        commit_message = ""
+        if isinstance(args.push, str):
+            commit_message = args.push
+        else:
+            commit_message = input("Enter commit message: ").strip()
+            if not commit_message:
+                print(colorize_text("Commit message cannot be empty.", 'RED', bright=True))
+                sys.exit(1)
+        push_normino(commit_message)
         return
     all_files = []
     for path in args.paths:
