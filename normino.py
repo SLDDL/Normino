@@ -130,9 +130,17 @@ def print_warnings(warning_files):
         for warning in warnings:
             print(f"   {colorize_text(warning, 'YELLOW')}")
 
-def run_norminette(files, error_only, summary_only, detailed):
+import time
+import shutil
+import textwrap
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from collections import defaultdict
+import os
+
+def run_norminette(files, error_only, summary_only, detailed, print_output=True):
     start_time = time.time()
-    print(colorize_text("Processing...", 'CYAN'))
+    if print_output:
+        print(colorize_text("Processing...", 'CYAN'))
     files_ok, files_failed, errors_by_file, warning_files = [], [], [], []
     with ProcessPoolExecutor(max_workers=7) as executor:
         future_to_file = {
@@ -150,54 +158,58 @@ def run_norminette(files, error_only, summary_only, detailed):
                 errors_by_file.append((file, error_lines))
             elif status in ["fail", "timeout", "crash"]:
                 files_failed.append((file, error_lines))
-    print("\033[A                             \033[A")
-    if not summary_only:
-        if files_ok and not error_only:
-            print(colorize_text("══════════════[ PASS ]══════════════════", 'GREEN'))
-            files_ok.sort()
-            wrapped_files_ok = textwrap.fill(
-                colorize_text(", ".join(files_ok), 'GREEN'),
-                width=shutil.get_terminal_size().columns,
-                break_on_hyphens=False,
-            )
-            print(wrapped_files_ok)
-            if errors_by_file:
-                print()
-        if warning_files:
-            print_warnings(warning_files)
-        if errors_by_file:
-            print(colorize_text("══════════════[ FAIL ]══════════════════", 'RED'))
-            print(colorize_text(f"{'Line':>4} {'Col':>4} Error Description", 'YELLOW'))
-            errors_by_file.sort()
-            for file, errors in errors_by_file:
-                display_errors(file, errors, detailed)
-        if files_failed:
-            print("══════════════[ FAILED ]════════════════")
-            files_failed.sort(key=lambda x: x[0])
-            for file, msg in files_failed:
-                wrapped_failed_msg = textwrap.fill(
-                    colorize_text(f"{file}: {msg}", 'YELLOW'),
+    if print_output:            
+        print("\033[A                             \033[A")
+        if not summary_only:
+            if files_ok and not error_only:
+                print(colorize_text("══════════════[ PASS ]══════════════════", 'GREEN'))
+                files_ok.sort()
+                wrapped_files_ok = textwrap.fill(
+                    colorize_text(", ".join(files_ok), 'GREEN'),
                     width=shutil.get_terminal_size().columns,
                     break_on_hyphens=False,
                 )
-                print("\n".join(wrapped_failed_msg.split("\n")))
-    if summary_only or errors_by_file or files_failed:
-        print("════════════════════════════════════════")
-        unique_files_with_errors = set(file for file, _ in errors_by_file)
-        print(colorize_text(f"Correct files: {len(files_ok)}", 'GREEN'))
-        print(
-            colorize_text(
-                f"Files with errors: {len(unique_files_with_errors)}", 'RED'
-            )
-        )
-        crashnum = len(files_failed)
-        if crashnum != 0:
-            print(colorize_text(f"Files that crashed norminette: {crashnum}", 'RED'))
-    end_time = time.time()
-    execution_time = end_time - start_time
-    print(colorize_text(f"Execution time: {execution_time:.2f} seconds", 'BLUE'))
-    return len(errors_by_file), len(files_failed)
-
+                print(wrapped_files_ok)
+                if errors_by_file:
+                    print()
+            if warning_files:
+                print_warnings(warning_files)
+            if errors_by_file:
+                print(colorize_text("══════════════[ FAIL ]══════════════════", 'RED'))
+                print(colorize_text(f"{'Line':>4} {'Col':>4} Error Description", 'YELLOW'))
+                errors_by_file.sort()
+                for file, errors in errors_by_file:
+                    display_errors(file, errors, detailed)
+            if files_failed:
+                print("══════════════[ FAILED ]════════════════")
+                files_failed.sort(key=lambda x: x[0])
+                for file, msg in files_failed:
+                    wrapped_failed_msg = textwrap.fill(
+                        colorize_text(f"{file}: {msg}", 'YELLOW'),
+                        width=shutil.get_terminal_size().columns,
+                        break_on_hyphens=False,
+                    )
+                    print("\n".join(wrapped_failed_msg.split("\n")))
+        if summary_only or errors_by_file or files_failed:
+            print("════════════════════════════════════════")
+            unique_files_with_errors = set(file for file, _ in errors_by_file)
+            print(colorize_text(f"Correct files: {len(files_ok)}", 'GREEN'))
+            print(colorize_text(f"Files with errors: {len(unique_files_with_errors)}", 'RED'))
+            crashnum = len(files_failed)
+            if crashnum != 0:
+                print(colorize_text(f"Files that crashed norminette: {crashnum}", 'RED'))
+        end_time = time.time()
+        execution_time = end_time - start_time
+        print(colorize_text(f"Execution time: {execution_time:.2f} seconds", 'BLUE'))
+    if print_output:
+        return len(errors_by_file), len(files_failed)
+    else:
+        stats = defaultdict(int)
+        combined = errors_by_file + files_failed     
+        for file, _ in combined:
+            full_dir = os.path.dirname(os.path.abspath(file))
+            stats[full_dir] += 1
+        return dict(stats)
 def normalize_name(name):
     return name.replace(" ", "").replace("_", "").replace("-", "").lower()
 
@@ -390,28 +402,59 @@ def check_unwanted_files():
         for file in files:
             if file == '.gitignore' or file == '.git':
                 continue
-            if os.access(os.path.join(root, file), os.X_OK) and not file.endswith(('.c', '.h', '.sh')):
-                executables.append(os.path.join(root, file))
+            full_path = os.path.join(root, file)
+            if os.access(full_path, os.X_OK) and not file.endswith(('.c', '.h', '.sh')):
+                executables.append(os.path.abspath(full_path))
     unwanted_files = executables
     for pattern in ['.*', '*.o', '*.a', '*~', '*.swp', '*.swo', '*.swn', '*.swo']:
         matches = [f for f in glob.glob(pattern, recursive=True) if not f.endswith('.git') and not f.endswith('.gitignore')]
-        unwanted_files.extend(matches)
+        unwanted_files.extend([os.path.abspath(f) for f in matches])
     unwanted_files = list(set(unwanted_files))
     return unwanted_files
 
 def git_commit_push(commit_message):
     try:
-        subprocess.run(["git", "add", "."], check=True)
-        subprocess.run(["git", "commit", "-m", commit_message], check=True)
+        status_result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        if not status_result.stdout.strip():
+            print(colorize_text("Nothing to commit, working tree clean.", 'GREEN'))
+            return
+        subprocess.run(["git", "add", "."], capture_output=True, text=True, check=True)
         try:
-            subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True, check=True)
-            current_branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"]).decode().strip()
-            subprocess.run(["git", "push", "-u", "origin", current_branch], check=True)
-        except subprocess.CalledProcessError:
-            print(colorize_text("No upstream branch set. Attempting to set upstream.", 'YELLOW'))
-            subprocess.run(["git", "push", "-u", "origin", "HEAD"], check=True)
+            subprocess.run(["git", "commit", "-m", commit_message], capture_output=True, text=True, check=True)
+            print(colorize_text(f"Committed changes with message: '{commit_message}'", 'GREEN'))
+            
+            try:
+                result = subprocess.run(
+                    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+                current_branch = result.stdout.strip()
+                push_result = subprocess.run(
+                    ["git", "push", "-u", "origin", current_branch],
+                    capture_output=True,
+                    text=True
+                )
+                if push_result.returncode != 0:
+                    print(colorize_text(f"Git push failed: {push_result.stderr.strip()}", 'RED'))
+                    sys.exit(1)
+                else:
+                    print(colorize_text("Push successful.", 'GREEN'))
+            except subprocess.CalledProcessError as e:
+                print(colorize_text("Failed to retrieve current branch.", 'RED'))
+                sys.exit(1)
+        except subprocess.CalledProcessError as e:
+            error_message = e.stderr.strip() if e.stderr else "Unknown error during commit."
+            print(colorize_text(f"Git commit failed: {error_message}", 'RED'))
+            sys.exit(1)
     except subprocess.CalledProcessError as e:
-        print(colorize_text(f"Git operation failed: {e}", 'RED'))
+        print(colorize_text(f"Git status failed: {e.stderr.strip()}", 'RED'))
         sys.exit(1)
 
 def reset_git():
@@ -430,18 +473,51 @@ def push_normino(commit_message):
         print(colorize_text("Unable to determine Git root directory.", 'RED', bright=True))
         sys.exit(1)
     os.chdir(git_root)
-    errors, failures = run_norminette(find_c_and_h_files(["."], []), error_only=True, summary_only=False, detailed=False)
-    if errors > 0 or failures > 0:
-        print(colorize_text(f"Cannot push because there are {errors} Norminette errors.", 'RED', bright=True))
+    stats = run_norminette(
+        find_c_and_h_files(["."], []),
+        error_only=True,
+        summary_only=False,
+        detailed=False,
+        print_output=False
+    )
+    if isinstance(stats, dict):
+        total_errors = sum(stats.values())
+        
+        if total_errors > 0:
+            print(colorize_text("Norm errors found in the following directories:", 'RED', bright=True))
+            for directory, count in sorted(stats.items()):
+                print(colorize_text(f" - {directory}: {count} error(s)", 'YELLOW'))
+            while True:
+                user_input = input(colorize_text("There are norm errors! Are you sure you want to push? (y/n): ", "ORANGE")).strip().lower()
+                if user_input == 'y':
+                    print(colorize_text("Proceeding with push despite norm errors.", 'BLUE'))
+                    break
+                elif user_input == 'n':
+                    print(colorize_text("Push aborted!", 'RED', bright=True))
+                    sys.exit(1)
+                else:
+                    print("Invalid input. Please enter 'y' or 'n'.")
+    else:
+        print(colorize_text("Unexpected response from Norminette.", 'RED', bright=True))
         sys.exit(1)
     unwanted_files = check_unwanted_files()
+    unwanted_files = [file for file in unwanted_files if not file.endswith('Makefile')]
     if unwanted_files:
-        print(colorize_text("Unwanted files detected:", 'RED', bright=True))
+        print(colorize_text("Potential unwanted files detected:", 'RED', bright=True))
         for file in unwanted_files:
             print(colorize_text(f" - {file}", 'YELLOW'))
-        print(colorize_text("Please remove these files before committing.", 'RED', bright=True))
-        sys.exit(1)
+        while True:
+            user_input = input(colorize_text("Unwanted files detected! Are you sure you want to push? (y/n): ", "ORANGE")).strip().lower()
+            if user_input == 'y':
+                print(colorize_text("Proceeding with push despite unwanted files.", 'BLUE'))
+                break
+            elif user_input == 'n':
+                print(colorize_text("Push aborted!", 'RED', bright=True))
+                sys.exit(1)
+            else:
+                print("Invalid input. Please enter 'y' or 'n'.")
     git_commit_push(commit_message)
+
 
 
 def main():
@@ -519,7 +595,7 @@ def main():
         if isinstance(args.push, str):
             commit_message = args.push
         else:
-            commit_message = input("Enter commit message: ").strip()
+            commit_message = input(colorize_text("Enter commit message: ", "GREEN")).strip()
             if not commit_message:
                 print(colorize_text("Commit message cannot be empty.", 'RED', bright=True))
                 sys.exit(1)
@@ -537,4 +613,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print(colorize_text("\nOperation cancelled by user.", 'ORANGE'))
+        sys.exit(0)
