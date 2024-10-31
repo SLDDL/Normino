@@ -617,8 +617,6 @@ def main():
     else:
         run_norminette(all_files, args.error_only, args.summary_only, args.detailed)
 
-
-
 if __name__ == "__main__":
     try:
         main()
