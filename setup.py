@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as f:
 
 setup(
     name="normino",
-    version="10.1",
+    version="10.6",
     url="https://github.com/SLDDL/Normino",
     py_modules=["normino"],
     install_requires=[

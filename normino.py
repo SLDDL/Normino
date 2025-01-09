@@ -14,7 +14,8 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 import tempfile
 import itertools
-
+from collections import defaultdict
+import signal
 init(autoreset=True)
 
 
@@ -44,6 +45,7 @@ def display_errors(file, errors, detailed):
     if not errors:
         return
     else:
+        file = os.path.relpath(file)
         print(colorize_text(f"{file}", 'CYAN'))
         if detailed:
             for error in errors:
@@ -68,16 +70,27 @@ def display_errors(file, errors, detailed):
 
 def find_c_and_h_files(paths, excludes):
     included_files = []
+    downloaded_tests_path = 'downloaded.tests'
+    if os.path.exists(downloaded_tests_path):
+        with open(downloaded_tests_path, 'r') as f:
+            downloaded_excludes = [line.strip() for line in f]
+            excludes.extend(downloaded_excludes)
     exclude_set = set(os.path.abspath(exclude) for exclude in excludes)
     for path in paths:
-        for root, dirs, files in os.walk(path):
-            dirs[:] = [d for d in dirs if os.path.abspath(os.path.join(root, d)) not in exclude_set]
-            for file in files:
-                file_path = os.path.join(root, file)
-                if os.path.abspath(file_path) in exclude_set:
-                    continue
-                if file.endswith(('.c', '.h')):
-                    included_files.append(file_path)
+        abs_path = os.path.abspath(path)
+        if os.path.isfile(abs_path):
+            if abs_path not in exclude_set and abs_path.endswith(('.c', '.h')):
+                included_files.append(abs_path)
+        elif os.path.isdir(abs_path):
+            for root, dirs, files in os.walk(abs_path):
+                dirs[:] = [d for d in dirs if os.path.abspath(os.path.join(root, d)) not in exclude_set]
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    abs_file_path = os.path.abspath(file_path)
+                    if abs_file_path in exclude_set:
+                        continue
+                    if file.endswith(('.c', '.h')):
+                        included_files.append(abs_file_path)
     return included_files
 
 def check_file(file, detailed):
@@ -126,16 +139,10 @@ def parse_output_line(line, detailed=False):
 def print_warnings(warning_files):
     print(colorize_text("══════════════[ WARN ]══════════════════", 'YELLOW'))
     for file, warnings in warning_files:
+        file = os.path.relpath(file)
         print(colorize_text(f"{file}:", 'CYAN'))
         for warning in warnings:
             print(f"   {colorize_text(warning, 'YELLOW')}")
-
-import time
-import shutil
-import textwrap
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from collections import defaultdict
-import os
 
 def run_norminette(files, error_only, summary_only, detailed, print_output=True):
     start_time = time.time()
@@ -164,8 +171,9 @@ def run_norminette(files, error_only, summary_only, detailed, print_output=True)
             if files_ok and not error_only:
                 print(colorize_text("══════════════[ PASS ]══════════════════", 'GREEN'))
                 files_ok.sort()
+                relative_files_ok = [os.path.relpath(f) for f in files_ok]
                 wrapped_files_ok = textwrap.fill(
-                    colorize_text(", ".join(files_ok), 'GREEN'),
+                    colorize_text(", ".join(relative_files_ok), 'GREEN'),
                     width=shutil.get_terminal_size().columns,
                     break_on_hyphens=False,
                 )
@@ -522,100 +530,59 @@ def push_normino(commit_message):
                 print("Invalid input. Please enter 'y' or 'n'.")
     git_commit_push(commit_message)
 
-
-
 def main():
     parser = argparse.ArgumentParser(description="Run norminette but better!")
-    subparsers = parser.add_subparsers(title="Commands", dest="command", required=False)
-    push_parser = subparsers.add_parser("push", help="Commit and push changes to Git.")
-    push_parser.add_argument(
-        "commit_message",
-        nargs='?',
-        default=None,
-        help="Optional commit message."
-    )
-    test_parser = subparsers.add_parser("test", help="Download tests with the given name.")
-    test_parser.add_argument(
-        "test_name",
-        nargs='*',
-        help="Name of the test to download."
-    )
-    clean_parser = subparsers.add_parser("clean", help="Clean all downloaded test directories and their record file.")
-    run_parser = subparsers.add_parser("run", help="Run installation script.")
-    update_parser = subparsers.add_parser("update", help="Update normino.")
-    parser.add_argument(
-        "paths",
-        nargs="*",
-        default=["."],
-        help="Space-separated directory paths or shell patterns like '*.c'. Default is current directory.",
-    )
-    parser.add_argument(
-        "-x",
-        "--exclude",
-        nargs="*",
-        default=[],
-        help="Space-separated list of file patterns to exclude. Example usage: --exclude '*.tmp' 'test/*'",
-    )
-    parser.add_argument(
-        "-e", "--error_only", action="store_true", help="Display only errors."
-    )
-    parser.add_argument(
-        "-s", "--summary_only", action="store_true", help="Display only the summary."
-    )
-    parser.add_argument(
-        "-d", "--detailed", action="store_true", help="Display detailed error messages."
-    )
-    parser.add_argument(
-        "-l",
-        "--list_files",
-        action="store_true",
-        help="List all found .c and .h files and exit.",
-    )
+    command_group = parser.add_mutually_exclusive_group()
+    command_group.add_argument("-p", "--push", nargs='?', const='__NO_MESSAGE__', metavar="COMMIT_MESSAGE", help="Commit and push changes to Git. Optionally provide a commit message.")
+    command_group.add_argument("-t", "--test", nargs='*', metavar="TEST_NAME", help="Download tests with the given name(s).")
+    command_group.add_argument("-c", "--clean", action="store_true", help="Clean all downloaded test directories and their record file.")
+    command_group.add_argument("-r", "--run", action="store_true", help="Run installation script.")
+    command_group.add_argument("-u", "--update", action="store_true", help="Update normino.")
+    parser.add_argument("-x", "--exclude", nargs="*", default=[], help="Space-separated list of file patterns to exclude. Example usage: --exclude '*.tmp' 'test/*'")
+    parser.add_argument("-e", "--error_only", action="store_true", help="Display only errors.")
+    parser.add_argument("-s", "--summary_only", action="store_true", help="Display only the summary.")
+    parser.add_argument("-d", "--detailed", action="store_true", help="Display detailed error messages.")
+    parser.add_argument("-l", "--list_files", action="store_true", help="List all found .c and .h files and exit.")
+    parser.add_argument("paths", nargs="*", help="Paths or patterns to check with norminette.")
     args = parser.parse_args()
 
-    if args.command == "run":
-        run_curl_bash()
-        return
-    elif args.command == "update":
-        updater()
-        return
-    elif args.command == "test":
-        test_name = " ".join(args.test_name) if args.test_name else ""
-        if test_name:
-            downloader(test_name)
-        else:
-            download_available()
-        return
-    elif args.command == "clean":
-        delete_downloaded_files()
-        return
-    elif args.command == "push":
-        if args.commit_message:
-            commit_message = args.commit_message
-        else:
-            commit_message = input(colorize_text("Enter commit message: ", "GREEN")).strip()
-            if not commit_message:
-                print(colorize_text("Commit message cannot be empty.", 'RED', bright=True))
-                sys.exit(1)
-        push_normino(commit_message)
-        return
-    elif args.push:
-        if args.push:
-            commit_message = input(colorize_text("Enter commit message: ", "GREEN")).strip()
-            if not commit_message:
-                print(colorize_text("Commit message cannot be empty.", 'RED', bright=True))
-                sys.exit(1)
+    if any([args.push is not None, args.test is not None, args.clean, args.run, args.update]):
+        if args.run:
+            run_curl_bash()
+            return
+        elif args.update:
+            updater()
+            return
+        elif args.test is not None:
+            if args.test:
+                test_name = " ".join(args.test)
+                downloader(test_name)
+            else:
+                download_available()
+            return
+        elif args.clean:
+            delete_downloaded_files()
+            return
+        elif args.push is not None:
+            if args.push != '__NO_MESSAGE__':
+                commit_message = args.push
+            else:
+                commit_message = input(colorize_text("Enter commit message: ", "GREEN")).strip()
+                if not commit_message:
+                    print(colorize_text("Commit message cannot be empty.", 'RED', bright=True))
+                    sys.exit(1)
             push_normino(commit_message)
             return
-    all_files = []
-    for path in args.paths:
-        all_files.extend(find_c_and_h_files(path, args.exclude))
-
-    if args.list_files:
-        for file in all_files:
-            print(file)
     else:
-        run_norminette(all_files, args.error_only, args.summary_only, args.detailed)
+        if not args.paths:
+            args.paths = ["."]
+        all_files = find_c_and_h_files(args.paths, args.exclude)
+        if args.list_files:
+            for file in all_files:
+                print(file)
+        else:
+            run_norminette(all_files, args.error_only, args.summary_only, args.detailed)
+
 
 if __name__ == "__main__":
     try:
@@ -623,4 +590,10 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         os.system('cls' if os.name == 'nt' else 'clear')
         print(colorize_text("\nOperation cancelled by user.", 'ORANGE'))
+        try:
+            pid = os.getpid()
+            pgid = os.getpgid(pid)
+            os.killpg(pgid, signal.SIGTERM)
+        except Exception:
+            pass
         sys.exit(0)
